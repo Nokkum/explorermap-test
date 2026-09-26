@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "explorermap",
+  "version": "${version}",
+  "name": "Explorer's Dynamic Off-Hand Map",
+  "description": "Camera-based fog-of-discovery mini-map HUD. Hold a filled map in your off-hand to reveal the world as you look at it.",
+  "authors": ["Nokkum"],
+  "license": "Apache-2.0",
+  "icon": "assets/explorermap/icon.png",
+
+  "environment": "*",
+
+  "entrypoints": {
+    "main":    ["com.explorermap.ExplorerMapMod"],
+    "client":  ["com.explorermap.ExplorerMapClient"],
+    "modmenu": ["com.explorermap.ExplorerMapModMenuIntegration"]
+  },
+
+  "depends": {
+    "fabricloader":  ">=0.19.5",
+    "fabric-api":    "*",
+    "minecraft":     "~1.21.1",
+    "java":          ">=21",
+    "cloth-config2": "*"
+  },
+
+  "suggests": {
+    "modmenu": "*"
+  }
+}
