@@ -2,19 +2,11 @@ package com.explorermap.waypoint;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.codec.PacketCodec;
 
 import java.util.UUID;
 
-/**
- * A single waypoint on a map.
- *
- * <p>{@link #id} is the waypoint's immutable, unique identity - assigned once
- * at creation and never reused or reassigned. All edit/delete/share
- * operations, both over the network and in saved data, should key off this
- * id rather than off {@link #name}. The name is purely display text: it can
- * be duplicated, renamed, or left blank without affecting which waypoint an
- * operation targets.
- */
 public record Waypoint(UUID id,
                        String name,
                        double worldX,
@@ -27,12 +19,10 @@ public record Waypoint(UUID id,
 
     public static final int DEFAULT_COLOR = 0xFFFFFFFF;
 
-    /** Convenience constructor for a system/unowned waypoint. */
     public Waypoint(UUID id, String name, double worldX, double worldZ, String iconId, int color) {
         this(id, name, worldX, worldZ, iconId, color, "");
     }
 
-    /** Creates a brand-new waypoint with a freshly generated id. */
     public static Waypoint create(String name, double x, double z, String iconId, int color, String ownerUuid) {
         return new Waypoint(UUID.randomUUID(), name, x, z, iconId, color, ownerUuid == null ? "" : ownerUuid);
     }
@@ -41,12 +31,10 @@ public record Waypoint(UUID id,
         return create(name, x, z, DEFAULT_ICON, DEFAULT_COLOR, "");
     }
 
-    /** Same identity and owner, with updated display fields - used when editing an existing waypoint. */
     public Waypoint withDisplay(String newName, String newIconId, int newColor) {
         return new Waypoint(id, newName, worldX, worldZ, newIconId, newColor, ownerUuid);
     }
 
-    /** Same identity, owner and display fields, with an updated position. */
     public Waypoint withPosition(double newWorldX, double newWorldZ) {
         return new Waypoint(id, name, newWorldX, newWorldZ, iconId, color, ownerUuid);
     }
@@ -68,11 +56,6 @@ public record Waypoint(UUID id,
         }
     }
 
-    // Older saved data (and, transiently during the id migration, older synced
-    // packets) may not carry an "id" field at all. Rather than fail to load,
-    // any waypoint missing a valid id is assigned a fresh random one at decode
-    // time; from that point on it behaves identically to a waypoint created
-    // after this change.
     public static final Codec<Waypoint> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
                     Codec.STRING.optionalFieldOf("id", "")
@@ -89,5 +72,30 @@ public record Waypoint(UUID id,
                 if (id == null) id = UUID.randomUUID();
                 return new Waypoint(id, name, worldX, worldZ, iconId, color, ownerUuid);
             })
+    );
+
+    private static final int MAX_NETWORK_NAME_LENGTH = 64;
+    private static final int MAX_NETWORK_ICON_LENGTH = 128;
+    private static final int MAX_NETWORK_OWNER_LENGTH = 64;
+
+    public static final PacketCodec<PacketByteBuf, Waypoint> PACKET_CODEC = PacketCodec.of(
+            (Waypoint value, PacketByteBuf buf) -> {
+                buf.writeUuid(value.id());
+                buf.writeString(value.name(), MAX_NETWORK_NAME_LENGTH);
+                buf.writeDouble(value.worldX());
+                buf.writeDouble(value.worldZ());
+                buf.writeString(value.iconId(), MAX_NETWORK_ICON_LENGTH);
+                buf.writeInt(value.color());
+                buf.writeString(value.ownerUuid() == null ? "" : value.ownerUuid(), MAX_NETWORK_OWNER_LENGTH);
+            },
+            (PacketByteBuf buf) -> new Waypoint(
+                    buf.readUuid(),
+                    buf.readString(MAX_NETWORK_NAME_LENGTH),
+                    buf.readDouble(),
+                    buf.readDouble(),
+                    buf.readString(MAX_NETWORK_ICON_LENGTH),
+                    buf.readInt(),
+                    buf.readString(MAX_NETWORK_OWNER_LENGTH)
+            )
     );
 }

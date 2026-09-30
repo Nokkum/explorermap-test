@@ -12,26 +12,13 @@ import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.world.World;
 
 import java.util.Objects;
 
-/**
- * The canonical identity of a single physical map: the dimension it was
- * created in, plus Minecraft's own raw map id.
- *
- * <p>A bare {@code int} map id is Minecraft's internal handle for a map, but
- * relying on it alone throughout the mod's own state (persistence, client
- * caches, waypoints, discovery, expansion records, sharing, packet
- * authorization) makes dimension handling implicit and easy to get wrong -
- * for example, resolving "the world this map belongs to" from whatever world
- * the player currently happens to stand in, rather than from the map's own
- * recorded dimension. Every piece of mod state that identifies "a specific
- * map" should key off this type instead, and every place that receives a
- * claimed identity from a packet or from disk should validate it against the
- * real {@link MapState#dimension} via {@link #resolveAndVerify}.
- */
 public record MapIdentity(RegistryKey<World> dimension, int mapId) {
 
     public MapIdentity {
@@ -46,7 +33,6 @@ public record MapIdentity(RegistryKey<World> dimension, int mapId) {
         return new MapIdentity(state.dimension, mapId);
     }
 
-    /** The full identity of a held/looked-up map stack, or null if it isn't a valid, resolvable map. */
     public static MapIdentity ofStack(ItemStack stack, World anyWorld) {
         int raw = rawIdOf(stack);
         if (raw < 0) return null;
@@ -72,26 +58,23 @@ public record MapIdentity(RegistryKey<World> dimension, int mapId) {
         return world.getMapState(new MapIdComponent(rawId));
     }
 
-    /**
-     * Resolves a claimed identity against the actual, live {@link MapState}
-     * for its raw id, using the map's own recorded dimension as the source of
-     * truth. Returns null both when the map does not exist and when the
-     * claimed dimension does not match the map's real dimension - the two
-     * cases a caller should treat identically (reject).
-     *
-     * <p>Map state lookups themselves are not dimension-scoped (any world
-     * reference can resolve any map id), so {@code anyWorld} only needs to be
-     * a valid world to query through, not necessarily the map's own world.
-     */
-    public static MapState resolveAndVerify(World anyWorld, MapIdentity claimed) {
+    public static MapState resolveAndVerify(MinecraftServer server, MapIdentity claimed) {
         if (claimed == null) return null;
-        MapState state = stateOf(claimed.mapId(), anyWorld);
+        ServerWorld world = server.getWorld(claimed.dimension());
+        if (world == null) return null;
+        MapState state = stateOf(claimed.mapId(), world);
         if (state == null) return null;
         if (!state.dimension.equals(claimed.dimension())) return null;
         return state;
     }
 
-    /** Stable, human-readable representation used in logs. */
+    public static MapState resolveAuthorized(MinecraftServer server, ExplorerMapSavedData savedData,
+                                              MapIdentity heldRoot, MapIdentity claimed) {
+        if (heldRoot == null || claimed == null) return null;
+        if (!savedData.isAccessibleFrom(heldRoot, claimed)) return null;
+        return resolveAndVerify(server, claimed);
+    }
+
     public String asKey() {
         return dimension.getValue() + "#" + mapId;
     }
@@ -109,7 +92,7 @@ public record MapIdentity(RegistryKey<World> dimension, int mapId) {
     public static final Codec<MapIdentity> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
                     DIMENSION_CODEC.fieldOf("dimension").forGetter(MapIdentity::dimension),
-                    Codec.INT.fieldOf("map_id").forGetter(MapIdentity::mapId)
+                    Codec.intRange(0, Integer.MAX_VALUE).fieldOf("map_id").forGetter(MapIdentity::mapId)
             ).apply(instance, MapIdentity::new)
     );
 

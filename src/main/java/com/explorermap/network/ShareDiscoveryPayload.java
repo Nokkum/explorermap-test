@@ -13,12 +13,6 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Hand;
 
-/**
- * Shares the sender's discovered area of whichever exact tile they are
- * currently holding. Deliberately narrower than the waypoint-management
- * payloads' family-wide access model - see the ownership-model note on
- * {@link ExplorerMapSavedData} (Finding #8).
- */
 public record ShareDiscoveryPayload(MapIdentity mapId, String targetName) implements CustomPayload {
 
     private static final int MAX_NAME_LENGTH = 64;
@@ -47,8 +41,8 @@ public record ShareDiscoveryPayload(MapIdentity mapId, String targetName) implem
     private static void handleOnServer(ServerPlayerEntity sender, ShareDiscoveryPayload payload) {
         var offHand = sender.getStackInHand(Hand.OFF_HAND);
         if (!ExplorerMapMod.isFilledMap(offHand)
-                || MapIdentity.resolveAndVerify(sender.getServerWorld(), payload.mapId()) == null
-                || MapIdentity.rawIdOf(offHand) != payload.mapId().mapId()) return;
+                || MapIdentity.resolveAndVerify(sender.getServer(), payload.mapId()) == null
+                || !payload.mapId().equals(MapIdentity.ofStack(offHand, sender.getServerWorld()))) return;
 
         ServerPlayerEntity target =
                 sender.getServer().getPlayerManager().getPlayer(payload.targetName().trim());

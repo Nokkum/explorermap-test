@@ -104,12 +104,6 @@ public final class TileTextureCache {
                     if (sameDimension) {
                         int sampleX = minX + col * scale + scale / 2;
                         int sampleZ = minZ + row * scale + scale / 2;
-                        // Sample at the actual terrain surface rather than a
-                        // fixed Y level (Finding #14), so integrations that key
-                        // off block state (e.g. biome or block-based tinting)
-                        // see the real surface block instead of whatever
-                        // happens to occupy Y=64 - air in a valley, stone
-                        // inside a mountain, etc.
                         int sampleY = surfaceY(world, sampleX, sampleZ);
                         var sample = new BlockPos(sampleX, sampleY, sampleZ);
                         argb = ExplorerMapApi.colorFor(world, sample, vanilla);
@@ -134,11 +128,6 @@ public final class TileTextureCache {
         }
     }
 
-    /**
-     * The world-surface Y level at the given column, falling back to a
-     * mid-range default if the chunk isn't loaded client-side (e.g. a
-     * background tile far from the player).
-     */
     private static int surfaceY(net.minecraft.world.World world, int x, int z) {
         if (world == null) return 64;
         try {

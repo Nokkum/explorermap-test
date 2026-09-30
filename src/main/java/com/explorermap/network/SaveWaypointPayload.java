@@ -9,21 +9,12 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Hand;
 
 import java.util.UUID;
 
-/**
- * Creates or edits a waypoint. Which case applies is determined purely by
- * {@code waypoint.id()} (Finding #4): if an existing waypoint on this map
- * already has that id, this is an edit of it (and is only authorized if the
- * sender owns it); otherwise it's a brand-new waypoint. There is no longer a
- * separate "previous name" field, and names are never used for identity -
- * two waypoints are free to share the same display name.
- */
 public record SaveWaypointPayload(MapIdentity mapId, Waypoint waypoint) implements CustomPayload {
 
     private static final int MAX_NAME_LENGTH = 64;
@@ -34,7 +25,7 @@ public record SaveWaypointPayload(MapIdentity mapId, Waypoint waypoint) implemen
     public static final PacketCodec<PacketByteBuf, SaveWaypointPayload> CODEC =
             PacketCodec.tuple(
                     MapIdentity.PACKET_CODEC,           SaveWaypointPayload::mapId,
-                    PacketCodecs.codec(Waypoint.CODEC),  SaveWaypointPayload::waypoint,
+                    Waypoint.PACKET_CODEC,               SaveWaypointPayload::waypoint,
                     SaveWaypointPayload::new
             );
 
@@ -59,17 +50,12 @@ public record SaveWaypointPayload(MapIdentity mapId, Waypoint waypoint) implemen
         MapIdentity heldRoot = MapIdentity.ofStack(offHand, player.getServerWorld());
         var savedData = ExplorerMapSavedData.get(player.getServer());
 
-        if (heldRoot == null || !savedData.isAccessibleFrom(heldRoot, payload.mapId())) {
-            ExplorerMapMod.LOGGER.warn(
-                    "[ExplorerMap] SaveWaypoint: rejected from {} - map {} is not the held map or a known expansion of it",
-                    player.getName().getString(), payload.mapId().asKey());
-            return;
-        }
-
-        var mapState = MapIdentity.resolveAndVerify(player.getServerWorld(), payload.mapId());
+        var mapState = MapIdentity.resolveAuthorized(
+                player.getServer(), savedData, heldRoot, payload.mapId());
         if (mapState == null) {
-            ExplorerMapMod.LOGGER.warn("[ExplorerMap] SaveWaypoint: map {} not found for {}",
-                    payload.mapId().asKey(), player.getName().getString());
+            ExplorerMapMod.LOGGER.warn(
+                    "[ExplorerMap] SaveWaypoint: rejected from {} - map {} is invalid or not accessible from the held map",
+                    player.getName().getString(), payload.mapId().asKey());
             return;
         }
 
@@ -134,10 +120,6 @@ public record SaveWaypointPayload(MapIdentity mapId, Waypoint waypoint) implemen
             return;
         }
 
-        // Identity and ownership are always decided server-side, never
-        // trusted from the client: an edit keeps its original id and owner,
-        // and a new waypoint is always owned by the sender regardless of
-        // whatever ownerUuid the client's packet happened to carry.
         UUID id = editing ? previous.id() : incomingId;
         String ownerUuid = editing ? previous.ownerUuid() : playerUuid;
         Waypoint sanitized = new Waypoint(id, name, wx, wz, iconId, payload.waypoint().color(), ownerUuid);

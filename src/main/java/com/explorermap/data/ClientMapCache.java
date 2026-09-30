@@ -22,10 +22,6 @@ public final class ClientMapCache {
     }
 
     public static void tickRecency() {
-        // MapEntryData.tickRecency() is itself guarded by a "has anything
-        // left to fade" flag, so maps with no recent activity are skipped in
-        // O(1) rather than scanning their full 16KB recency buffer every
-        // frame (Finding #10).
         for (MapEntryData entry : ENTRIES.values()) {
             entry.tickRecency();
         }

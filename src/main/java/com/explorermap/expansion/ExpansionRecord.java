@@ -7,13 +7,6 @@ import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
-/**
- * Records that an adjacent map tile exists in a given direction from this
- * one. {@code target} is the full identity (dimension + map id) of that
- * adjacent tile, not just a raw id - an expansion always stays within the
- * same dimension as the map it expands from, and keeping the dimension
- * explicit here lets that invariant be checked rather than assumed.
- */
 public record ExpansionRecord(Direction direction, MapIdentity target, boolean highDetail) {
 
     public enum Direction {

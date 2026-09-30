@@ -60,11 +60,6 @@ public record RequestExpansionPayload(
             return;
         }
 
-        // An expansion must be created in the map's own dimension, not
-        // whatever dimension the player currently happens to be standing in
-        // (Finding #1): a player can carry a held map through a portal, and
-        // the new adjacent tile still needs to belong to the same map family
-        // and the same dimension as the map it's expanding.
         ServerWorld mapWorld = player.getServer().getWorld(mapState.dimension);
         if (mapWorld == null) {
             ExpansionFailedPayload.sendTo(player, payload.direction(),
@@ -111,13 +106,31 @@ public record RequestExpansionPayload(
             return;
         }
 
+        if (!newMapId.dimension().equals(mapId.dimension())) {
+            ExplorerMapMod.LOGGER.warn(
+                    "[ExplorerMap] Expansion rejected: target {} is not in the same dimension as source {}",
+                    newMapId.asKey(), mapId.asKey());
+            ExpansionFailedPayload.sendTo(player, payload.direction(),
+                    ExpansionFailedPayload.Reason.NO_MAP_IN_OFFHAND);
+            return;
+        }
+
+        if (savedData.isAccessibleFrom(newMapId, mapId)) {
+            ExplorerMapMod.LOGGER.warn(
+                    "[ExplorerMap] Expansion rejected: {} -> {} would create a cycle",
+                    mapId.asKey(), newMapId.asKey());
+            ExpansionFailedPayload.sendTo(player, payload.direction(),
+                    ExpansionFailedPayload.Reason.CYCLE_DETECTED);
+            return;
+        }
+
         consumeResources(player, payload.highDetail());
 
         savedData.addExpansion(mapId,
                 new ExpansionRecord(payload.direction(), newMapId, payload.highDetail()));
 
         ServerPlayNetworking.send(player,
-                new GrantExpansionPayload(payload.direction(), newMapId, payload.highDetail()));
+                new GrantExpansionPayload(payload.direction(), mapId, newMapId, payload.highDetail()));
     }
 
     private static ExpansionFailedPayload.Reason checkResources(ServerPlayerEntity player, boolean highDetail) {

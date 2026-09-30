@@ -24,27 +24,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Server-side persistent state for the whole mod.
- *
- * <p><b>Map-family ownership model (Finding #8):</b> access control here is
- * deliberately "root-family" scoped, not "exact map" scoped: a player holding
- * the root map of a family can manage waypoints anywhere in that family (see
- * {@link #isAccessibleFrom}), including on tiles reached only after several
- * expansions. This is intentional (see DESIGN.md) and is applied consistently
- * by every waypoint-management packet handler. Discovery *sharing*
- * ({@code ShareDiscoveryPayload}) is narrower by design: it shares the
- * discovery data of whichever exact tile the player is currently holding,
- * since "my explored area of this tile" is inherently tied to that specific
- * physical tile rather than to the family as a whole.
- */
 public class ExplorerMapSavedData extends PersistentState {
 
     private static final String SAVE_ID = "explorermap_data";
 
-    // Defensive caps applied when loading a save file (Finding #12): a
-    // corrupted or maliciously edited save should not be able to force
-    // unbounded memory allocation during load.
     private static final int MAX_ENTRY_ROWS = 20_000;
     private static final int MAX_TILE_ROWS = 20_000;
     private static final int MAX_SHARE_ROWS = 100_000;
@@ -82,17 +65,20 @@ public class ExplorerMapSavedData extends PersistentState {
         return entries.get(mapId);
     }
 
+    public List<MapIdentity> mapsWithPendingStructureChunks() {
+        List<MapIdentity> result = new ArrayList<>();
+        entries.forEach((id, entry) -> {
+            if (!entry.getPendingStructureChunks().isEmpty()) result.add(id);
+        });
+        return result;
+    }
+
     public boolean mergeBitmask(MapIdentity mapId, byte[] bitmask) {
         boolean changed = getOrCreate(mapId).mergeBitmask(bitmask);
         if (changed) markDirty();
         return changed;
     }
 
-    /**
-     * A single player's own discovered-pixels view for this map, or (if that
-     * player has never had per-player data recorded for this map) the legacy
-     * union as a bootstrap default.
-     */
     public byte[] getPlayerDiscovery(MapIdentity mapId, UUID playerId) {
         if (playerId == null) return getOrCreate(mapId).getDiscoveredPixelsCopy();
         String uuid = playerId.toString();
@@ -103,15 +89,6 @@ public class ExplorerMapSavedData extends PersistentState {
         return players.getOrDefault(uuid, new byte[MapEntryData.BYTE_COUNT]).clone();
     }
 
-    /**
-     * Returns the OR-union of every player's individually tracked discovery
-     * for this map: the canonical "how much of this map has anyone
-     * discovered" view (Finding #7). Structure auto-detection and any other
-     * code that needs "the discovered area" in aggregate should use this
-     * rather than reading a single {@link MapEntryData}'s own bitmask field
-     * directly, since that field is retained only as a migration/bootstrap
-     * fallback for maps or saves that predate per-player discovery tracking.
-     */
     public byte[] aggregateDiscoveredPixels(MapIdentity mapId) {
         Map<String, byte[]> players = playerDiscoveries.get(mapId);
         if (players == null || players.isEmpty()) {
@@ -126,8 +103,11 @@ public class ExplorerMapSavedData extends PersistentState {
         return result;
     }
 
-    public boolean mergePlayerBitmask(MapIdentity mapId, UUID playerId, byte[] bitmask) {
-        if (playerId == null || bitmask == null) return false;
+    public Set<Integer> mergePlayerBitmask(MapIdentity mapId, UUID playerId, byte[] bitmask) {
+        if (playerId == null || bitmask == null) return Set.of();
+
+        byte[] aggregateBefore = aggregateDiscoveredPixels(mapId);
+
         Map<String, byte[]> players =
                 playerDiscoveries.computeIfAbsent(mapId, ignored -> new HashMap<>());
         boolean hasExistingPlayers = !players.isEmpty();
@@ -142,21 +122,37 @@ public class ExplorerMapSavedData extends PersistentState {
             current[i] |= bitmask[i];
             changed |= before != current[i];
         }
-        // Legacy union field: kept in sync only as a bootstrap seed for saves
-        // and brand-new maps that don't have per-player data yet. New reads
-        // should prefer aggregateDiscoveredPixels() (Finding #7).
         boolean legacyChanged = getOrCreate(mapId).mergeBitmask(bitmask);
         if (changed || legacyChanged) markDirty();
-        return changed;
+
+        if (!changed) return Set.of();
+
+        byte[] aggregateAfter = aggregateDiscoveredPixels(mapId);
+        Set<Integer> newlyDiscovered = new HashSet<>();
+        for (int i = 0; i < MapEntryData.BYTE_COUNT; i++) {
+            byte delta = (byte) (aggregateAfter[i] & ~aggregateBefore[i]);
+            if (delta == 0) continue;
+            for (int bit = 0; bit < 8; bit++) {
+                if ((delta & (1 << bit)) != 0) newlyDiscovered.add(i * 8 + bit);
+            }
+        }
+        return newlyDiscovered;
     }
 
     public boolean sharePlayerDiscovery(MapIdentity mapId, UUID from, UUID recipient) {
         if (from == null || recipient == null) return false;
         byte[] source = getPlayerDiscovery(mapId, from);
-        return mergePlayerBitmask(mapId, recipient, source);
+        return !mergePlayerBitmask(mapId, recipient, source).isEmpty();
     }
 
     public void addExpansion(MapIdentity mapId, ExpansionRecord record) {
+        if (record != null && record.target() != null
+                && !record.target().dimension().equals(mapId.dimension())) {
+            ExplorerMapMod.LOGGER.warn(
+                    "[ExplorerMap] Refusing a cross-dimension expansion: {} -> {}",
+                    mapId.asKey(), record.target().asKey());
+            return;
+        }
         getOrCreate(mapId).addExpansion(record);
         markDirty();
     }
@@ -233,12 +229,6 @@ public class ExplorerMapSavedData extends PersistentState {
                 .toList();
     }
 
-    /**
-     * Whether {@code targetMapId} is reachable from {@code heldRootId} by
-     * following expansion links (in either direction it happened to be
-     * recorded) - i.e. whether they belong to the same map family. See the
-     * class-level doc for why this is the mod's intended access model.
-     */
     public boolean isAccessibleFrom(MapIdentity heldRootId, MapIdentity targetMapId) {
         if (heldRootId == null || targetMapId == null) return false;
         if (heldRootId.equals(targetMapId)) return true;
@@ -326,7 +316,7 @@ public class ExplorerMapSavedData extends PersistentState {
                 instance.group(
                         MapIdentity.CODEC.fieldOf("map_id").forGetter(DiscoveryRow::mapId),
                         Codec.STRING.fieldOf("player_uuid").forGetter(DiscoveryRow::playerUuid),
-                        Codec.BYTE.listOf().xmap(
+                        CodecUtil.boundedList(Codec.BYTE, MapEntryData.BYTE_COUNT, "bitmask").xmap(
                                 list -> {
                                     byte[] result = new byte[MapEntryData.BYTE_COUNT];
                                     for (int i = 0; i < Math.min(result.length, list.size()); i++) {
@@ -351,12 +341,14 @@ public class ExplorerMapSavedData extends PersistentState {
 
     private static final Codec<SaveShape> SHAPE_CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
-                    EntryRow.CODEC.listOf().fieldOf("entries").forGetter(SaveShape::entries),
-                    TileRow.CODEC.listOf().fieldOf("tiles").forGetter(SaveShape::tiles),
-                    ShareRow.CODEC.listOf()
+                    CodecUtil.boundedList(EntryRow.CODEC, MAX_ENTRY_ROWS, "entries")
+                            .fieldOf("entries").forGetter(SaveShape::entries),
+                    CodecUtil.boundedList(TileRow.CODEC, MAX_TILE_ROWS, "tiles")
+                            .fieldOf("tiles").forGetter(SaveShape::tiles),
+                    CodecUtil.boundedList(ShareRow.CODEC, MAX_SHARE_ROWS, "waypoint_shares")
                             .optionalFieldOf("waypoint_shares", List.of())
                             .forGetter(SaveShape::shares),
-                    DiscoveryRow.CODEC.listOf()
+                    CodecUtil.boundedList(DiscoveryRow.CODEC, MAX_DISCOVERY_ROWS, "player_discoveries")
                             .optionalFieldOf("player_discoveries", List.of())
                             .forGetter(SaveShape::discoveries)
             ).apply(instance, SaveShape::new)
@@ -374,17 +366,17 @@ public class ExplorerMapSavedData extends PersistentState {
     public static final Codec<ExplorerMapSavedData> CODEC = SHAPE_CODEC.xmap(
             shape -> {
                 Map<MapIdentity, MapEntryData> entryMap = new HashMap<>();
-                for (EntryRow row : cap(shape.entries(), MAX_ENTRY_ROWS, "entries")) {
+                for (EntryRow row : shape.entries()) {
                     entryMap.put(row.key(), row.value());
                 }
 
                 Map<TileKey, MapIdentity> tileMap = new HashMap<>();
-                for (TileRow row : cap(shape.tiles(), MAX_TILE_ROWS, "tiles")) {
+                for (TileRow row : shape.tiles()) {
                     tileMap.put(row.key(), row.mapId());
                 }
 
                 Map<MapIdentity, Map<String, Set<UUID>>> shareMap = new HashMap<>();
-                for (ShareRow row : cap(shape.shares(), MAX_SHARE_ROWS, "waypoint_shares")) {
+                for (ShareRow row : shape.shares()) {
                     UUID waypointId = parseUuidOrNull(row.waypointId());
                     UUID recipient = parseUuidOrNull(row.recipientUuid());
                     if (waypointId == null || recipient == null) continue;
@@ -395,7 +387,7 @@ public class ExplorerMapSavedData extends PersistentState {
                 }
 
                 Map<MapIdentity, Map<String, byte[]>> discoveryMap = new HashMap<>();
-                for (DiscoveryRow row : cap(shape.discoveries(), MAX_DISCOVERY_ROWS, "player_discoveries")) {
+                for (DiscoveryRow row : shape.discoveries()) {
                     if (parseUuidOrNull(row.playerUuid()) == null) continue;
                     discoveryMap.computeIfAbsent(row.mapId(), ignored -> new HashMap<>())
                             .put(row.playerUuid(), row.bitmask().clone());
@@ -420,15 +412,6 @@ public class ExplorerMapSavedData extends PersistentState {
                 return new SaveShape(entryRows, tileRows, shareRows, discoveryRows);
             }
     );
-
-    private static <T> List<T> cap(List<T> list, int max, String label) {
-        if (list.size() <= max) return list;
-        ExplorerMapMod.LOGGER.warn(
-                "[ExplorerMap] Saved data has {} '{}' rows, more than the expected maximum of {} - "
-                        + "truncating. The save may be corrupted or was edited by hand.",
-                list.size(), label, max);
-        return list.subList(0, max);
-    }
 
     public static final PersistentState.Type<ExplorerMapSavedData> TYPE = new PersistentState.Type<>(
             ExplorerMapSavedData::new,

@@ -232,11 +232,6 @@ public class WaypointEditScreen extends Screen {
             wz = client.player.getZ();
         }
 
-        // Identity (Finding #4): an edit always keeps the original waypoint's
-        // id and owner; a new waypoint gets a fresh id. The server re-derives
-        // ownership authoritatively regardless, but setting it locally keeps
-        // the optimistic client-side update consistent with what the server
-        // will echo back.
         UUID id = editingWaypoint != null ? editingWaypoint.id() : UUID.randomUUID();
         String ownerUuid = editingWaypoint != null
                 ? editingWaypoint.ownerUuid()
@@ -266,8 +261,6 @@ public class WaypointEditScreen extends Screen {
         }
         if (mapId == null) { client.setScreen(parent); return; }
 
-        // addWaypoint() replaces any existing entry with the same id, so no
-        // separate remove-then-add dance is needed even when editing.
         var mapEntry = ClientMapCache.getOrCreate(mapId);
         mapEntry.addWaypoint(wp);
 

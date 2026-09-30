@@ -10,7 +10,6 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
@@ -38,7 +37,7 @@ public record SyncWaypointsPayload(
             PacketCodec.tuple(
                     MapIdentity.PACKET_CODEC,
                     SyncWaypointsPayload::mapId,
-                    PacketCodecs.collection(ArrayList::new, PacketCodecs.codec(Waypoint.CODEC)),
+                    PacketCodecs.collection(ArrayList::new, Waypoint.PACKET_CODEC),
                     SyncWaypointsPayload::waypoints,
                     PacketCodecs.VAR_INT, SyncWaypointsPayload::waypointCapacity,
                     PacketCodecs.VAR_INT, SyncWaypointsPayload::waypointShareCharges,
@@ -60,7 +59,7 @@ public record SyncWaypointsPayload(
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             var offHand = p.getStackInHand(Hand.OFF_HAND);
             if (!ExplorerMapMod.isFilledMap(offHand)) continue;
-            if (MapIdentity.rawIdOf(offHand) == mapId.mapId()) {
+            if (mapId.equals(MapIdentity.ofStack(offHand, p.getServerWorld()))) {
                 sendTo(p, mapId);
             }
         }
@@ -79,12 +78,6 @@ public record SyncWaypointsPayload(
                     payload.waypoints().size());
             return;
         }
-
-        var client = MinecraftClient.getInstance();
-        if (client.world == null) return;
-
-        var mapState = MapIdentity.stateOf(payload.mapId().mapId(), client.world);
-        if (mapState == null) return;
 
         var mapEntry = ClientMapCache.getOrCreate(payload.mapId());
         mapEntry.replaceAllWaypoints(payload.waypoints());

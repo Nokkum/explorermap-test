@@ -31,7 +31,8 @@ public final class StructureWaypointDetector {
                                       ServerPlayerEntity player,
                                       MapIdentity mapId,
                                       MapState mapState,
-                                      ExplorerMapSavedData savedData) {
+                                      ExplorerMapSavedData savedData,
+                                      Set<Integer> newlyDiscoveredBits) {
         ServerWorld world = server.getWorld(mapState.dimension);
         if (world == null) return;
 
@@ -41,77 +42,31 @@ public final class StructureWaypointDetector {
         int minZ = mapState.centerZ - halfBlocks;
 
         MapEntryData entry = savedData.getOrCreate(mapId);
-        // The aggregate (all-players) discovered area is the correct input
-        // here, not just the map's legacy union field (Finding #7): a
-        // structure a *different* player discovered should still be able to
-        // trigger an auto-waypoint.
         byte[] bitmask = savedData.aggregateDiscoveredPixels(mapId);
 
-        // Incremental scanning (Finding #3): only look at chunks touched by
-        // pixels that haven't already been scanned for structures on this
-        // map, instead of rescanning the whole 128x128 mask on every upload.
-        Set<ChunkPos> newlyRelevantChunks = new HashSet<>();
-        for (int row = 0; row < 128; row++) {
-            for (int col = 0; col < 128; col++) {
-                int bit = row * 128 + col;
-                if ((bitmask[bit >> 3] & (1 << (bit & 7))) == 0) continue;
+        Set<Integer> bitsToConsider = newlyDiscoveredBits != null
+                ? newlyDiscoveredBits
+                : allDiscoveredBits(bitmask);
 
-                int wx = minX + col * scale + scale / 2;
-                int wz = minZ + row * scale + scale / 2;
-                ChunkPos chunkPos = new ChunkPos(new BlockPos(wx, 64, wz));
-                if (entry.markStructureChunkProcessed(chunkPos.toLong())) {
-                    newlyRelevantChunks.add(chunkPos);
-                }
-            }
+        Set<Long> chunksToScan = new HashSet<>();
+        for (int bit : bitsToConsider) {
+            int col = bit % 128, row = bit / 128;
+            int wx = minX + col * scale + scale / 2;
+            int wz = minZ + row * scale + scale / 2;
+            chunksToScan.add(new ChunkPos(new BlockPos(wx, 64, wz)).toLong());
         }
 
-        if (newlyRelevantChunks.isEmpty()) return;
+        if (chunksToScan.isEmpty()) return;
 
         boolean placedAny = false;
 
-        for (ChunkPos chunkPos : newlyRelevantChunks) {
+        for (long chunkKey : chunksToScan) {
+            ChunkPos chunkPos = new ChunkPos(chunkKey);
             if (!world.isChunkLoaded(chunkPos.x, chunkPos.z)) {
-                // Not loaded yet - allow a later discovery upload to retry
-                // this chunk once it is, instead of permanently skipping it.
-                entry.unmarkStructureChunkProcessed(chunkPos.toLong());
+                entry.addPendingStructureChunk(chunkKey);
                 continue;
             }
-
-            var chunk = world.getChunk(chunkPos.x, chunkPos.z);
-            Map<Structure, StructureStart> starts = chunk.getStructureStarts();
-            if (starts.isEmpty()) continue;
-
-            for (Map.Entry<Structure, StructureStart> se : starts.entrySet()) {
-                StructureStart start = se.getValue();
-                if (!start.hasChildren()) continue;
-
-                // Geometric overlap check (Finding #2): a structure only
-                // counts as "discovered" if its own bounding box actually
-                // overlaps discovered map pixels, not merely because some
-                // discovered pixel happens to fall anywhere in the same
-                // chunk (structures can span many chunks, e.g. villages,
-                // mansions, ocean monuments).
-                if (!structureOverlapsDiscovered(start, bitmask, minX, minZ, scale)) continue;
-
-                var bb = start.getBoundingBox();
-                double structX = (bb.getMinX() + bb.getMaxX()) / 2.0;
-                double structZ = (bb.getMinZ() + bb.getMaxZ()) / 2.0;
-
-                if (hasDuplicateWaypoint(entry, structX, structZ)) continue;
-
-                String iconId   = iconForStructure(world, se.getKey());
-                String baseName = nameForStructure(world, se.getKey());
-                String name     = uniqueDisplayName(entry, baseName);
-                int color       = colorForStructure(world, se.getKey());
-
-                Waypoint wp = Waypoint.create(name, structX, structZ, iconId, color, "");
-                savedData.addWaypoint(mapId, wp);
-                placedAny = true;
-
-                ExplorerMapMod.LOGGER.info(
-                        "[ExplorerMap] Auto-waypoint: {} at ({}, {}) on map {}",
-                        name, (int) structX, (int) structZ, mapId.asKey());
-            }
+            placedAny |= scanChunkForStructures(world, entry, savedData, mapId, chunkPos, bitmask, minX, minZ, scale);
         }
 
         if (placedAny) {
@@ -119,11 +74,85 @@ public final class StructureWaypointDetector {
         }
     }
 
-    /**
-     * Whether a structure's own bounding box overlaps any currently
-     * discovered map pixel, checked at pixel (map-column/row) resolution
-     * rather than at chunk resolution.
-     */
+    public static void retryPending(MinecraftServer server,
+                                     MapIdentity mapId,
+                                     MapState mapState,
+                                     ExplorerMapSavedData savedData) {
+        ServerWorld world = server.getWorld(mapState.dimension);
+        if (world == null) return;
+
+        MapEntryData entry = savedData.getOrCreate(mapId);
+        Set<Long> pending = entry.getPendingStructureChunks();
+        if (pending.isEmpty()) return;
+
+        int scale      = 1 << mapState.scale;
+        int halfBlocks = 64 * scale;
+        int minX = mapState.centerX - halfBlocks;
+        int minZ = mapState.centerZ - halfBlocks;
+        byte[] bitmask = savedData.aggregateDiscoveredPixels(mapId);
+
+        boolean placedAny = false;
+        for (long chunkKey : pending) {
+            ChunkPos chunkPos = new ChunkPos(chunkKey);
+            if (!world.isChunkLoaded(chunkPos.x, chunkPos.z)) continue;
+
+            entry.removePendingStructureChunk(chunkKey);
+            placedAny |= scanChunkForStructures(world, entry, savedData, mapId, chunkPos, bitmask, minX, minZ, scale);
+        }
+
+        if (placedAny) {
+            SyncWaypointsPayload.broadcastTo(server, mapId);
+        }
+    }
+
+    private static boolean scanChunkForStructures(ServerWorld world, MapEntryData entry, ExplorerMapSavedData savedData,
+                                                    MapIdentity mapId, ChunkPos chunkPos, byte[] bitmask,
+                                                    int minX, int minZ, int scale) {
+        var chunk = world.getChunk(chunkPos.x, chunkPos.z);
+        Map<Structure, StructureStart> starts = chunk.getStructureStarts();
+        if (starts.isEmpty()) return false;
+
+        boolean placedAny = false;
+
+        for (Map.Entry<Structure, StructureStart> se : starts.entrySet()) {
+            StructureStart start = se.getValue();
+            if (!start.hasChildren()) continue;
+            if (!structureOverlapsDiscovered(start, bitmask, minX, minZ, scale)) continue;
+
+            var bb = start.getBoundingBox();
+            double structX = (bb.getMinX() + bb.getMaxX()) / 2.0;
+            double structZ = (bb.getMinZ() + bb.getMaxZ()) / 2.0;
+
+            if (hasDuplicateWaypoint(entry, structX, structZ)) continue;
+
+            String iconId   = iconForStructure(world, se.getKey());
+            String baseName = nameForStructure(world, se.getKey());
+            String name     = uniqueDisplayName(entry, baseName);
+            int color       = colorForStructure(world, se.getKey());
+
+            Waypoint wp = Waypoint.create(name, structX, structZ, iconId, color, "");
+            savedData.addWaypoint(mapId, wp);
+            placedAny = true;
+
+            ExplorerMapMod.LOGGER.info(
+                    "[ExplorerMap] Auto-waypoint: {} at ({}, {}) on map {}",
+                    name, (int) structX, (int) structZ, mapId.asKey());
+        }
+
+        return placedAny;
+    }
+
+    private static Set<Integer> allDiscoveredBits(byte[] bitmask) {
+        Set<Integer> bits = new HashSet<>();
+        for (int i = 0; i < bitmask.length; i++) {
+            if (bitmask[i] == 0) continue;
+            for (int b = 0; b < 8; b++) {
+                if ((bitmask[i] & (1 << b)) != 0) bits.add(i * 8 + b);
+            }
+        }
+        return bits;
+    }
+
     private static boolean structureOverlapsDiscovered(StructureStart start, byte[] bitmask,
                                                          int minX, int minZ, int scale) {
         var bb = start.getBoundingBox();
@@ -157,13 +186,6 @@ public final class StructureWaypointDetector {
         return false;
     }
 
-    /**
-     * Waypoint identity is now always the immutable id (Finding #4), so a
-     * name collision can no longer silently delete an unrelated waypoint.
-     * This just keeps automatically generated names from being visually
-     * indistinguishable from one another in waypoint lists and share menus
-     * (Finding #5), e.g. "Village", "Village (2)", "Village (3)".
-     */
     private static String uniqueDisplayName(MapEntryData entry, String baseName) {
         Set<String> existingNames = entry.getWaypoints().stream()
                 .map(Waypoint::name)
