@@ -12,46 +12,68 @@ import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.network.packet.CustomPayload;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.Hand;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public final class SyncDiscoveryPayload {
 
-    public record Upload(MapIdentity mapId, byte[] bitmask) implements CustomPayload {
+    public static final int UPLOAD_INTERVAL_TICKS = 60;
+    public static final int UPLOADS_PER_WINDOW = 8;
+    public static final long UPLOAD_WINDOW_MILLIS = UPLOAD_INTERVAL_TICKS * 50L;
 
-        public static final CustomPayload.Id<Upload> ID =
-                new CustomPayload.Id<>(ExplorerMapRegistry.id("upload_discovery"));
+    private static final DiscoveryUploadLimiter LIMITER = new DiscoveryUploadLimiter(
+            System::nanoTime, UPLOADS_PER_WINDOW, UPLOAD_WINDOW_MILLIS, MapEntryData.BYTE_COUNT);
 
-        public static final PacketCodec<PacketByteBuf, Upload> CODEC =
-                PacketCodec.tuple(
+    private static final DiscoveryUploadTracker<MapIdentity> UPLOAD_TRACKER =
+            new DiscoveryUploadTracker<>(System::nanoTime);
+
+    private static int ticksSinceLastUpload = 0;
+
+    public record Upload(MapIdentity mapId, long generation, byte[] bitmask) implements CustomPacketPayload {
+
+        public static final CustomPacketPayload.Type<Upload> TYPE =
+                new CustomPacketPayload.Type<>(ExplorerMapRegistry.id("upload_discovery"));
+
+        public static final StreamCodec<FriendlyByteBuf, Upload> CODEC =
+                StreamCodec.composite(
                         MapIdentity.PACKET_CODEC, Upload::mapId,
-                        PacketCodecs.byteArray(MapEntryData.BYTE_COUNT), Upload::bitmask,
+                        ByteBufCodecs.VAR_LONG, Upload::generation,
+                        ByteBufCodecs.byteArray(MapEntryData.BYTE_COUNT), Upload::bitmask,
                         Upload::new
                 );
 
-        @Override public CustomPayload.Id<? extends CustomPayload> getId() { return ID; }
+        @Override public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
 
         public static void register() {
-            PayloadTypeRegistry.playC2S().register(ID, CODEC);
-            ServerPlayNetworking.registerGlobalReceiver(ID, (payload, ctx) ->
-                    ctx.server().execute(() -> handleOnServer(ctx.server(), ctx.player(), payload)));
+            PayloadTypeRegistry.serverboundPlay().register(TYPE, CODEC);
+            ServerPlayNetworking.registerGlobalReceiver(TYPE, (payload, ctx) -> {
+                ServerPlayer sender = ctx.player();
+                if (!LIMITER.tryAcquire(sender.getUUID(), payload.bitmask().length)) return;
+                ctx.server().execute(() -> handleOnServer(ctx.server(), sender, payload));
+            });
         }
 
-        private static void handleOnServer(MinecraftServer server, ServerPlayerEntity sender, Upload payload) {
+        private static void handleOnServer(MinecraftServer server, ServerPlayer sender, Upload payload) {
+            if (payload.generation() < 0L || payload.bitmask().length != MapEntryData.BYTE_COUNT) {
+                penalize(sender);
+                return;
+            }
 
-            var offHand = sender.getStackInHand(Hand.OFF_HAND);
-            if (!ExplorerMapMod.isFilledMap(offHand)) return;
+            var offHand = sender.getItemInHand(InteractionHand.OFF_HAND);
+            if (!ExplorerMapMod.isFilledMap(offHand)) {
+                penalize(sender);
+                return;
+            }
 
-            MapIdentity heldRoot = MapIdentity.ofStack(offHand, sender.getServerWorld());
+            MapIdentity heldRoot = MapIdentity.ofStack(offHand, sender.level());
             var savedData = ExplorerMapSavedData.get(server);
 
             var mapState = MapIdentity.resolveAuthorized(server, savedData, heldRoot, payload.mapId());
@@ -59,11 +81,13 @@ public final class SyncDiscoveryPayload {
                 ExplorerMapMod.LOGGER.warn(
                         "[ExplorerMap] Rejected discovery upload for map {} from {} - invalid or not accessible from the held map",
                         payload.mapId().asKey(), sender.getName().getString());
+                penalize(sender);
                 return;
             }
 
             Set<Integer> newlyDiscovered = savedData.mergePlayerBitmask(
-                    payload.mapId(), sender.getUuid(), payload.bitmask());
+                    payload.mapId(), sender.getUUID(), payload.bitmask());
+            ServerPlayNetworking.send(sender, new Ack(payload.mapId(), payload.generation()));
             if (newlyDiscovered.isEmpty()) return;
 
             ExplorerMapMod.LOGGER.debug("[ExplorerMap] Merged discovery for map {} from {}",
@@ -76,55 +100,93 @@ public final class SyncDiscoveryPayload {
         }
     }
 
-    public record Broadcast(MapIdentity mapId, byte[] bitmask) implements CustomPayload {
+    public record Ack(MapIdentity mapId, long generation) implements CustomPacketPayload {
 
-        public static final CustomPayload.Id<Broadcast> ID =
-                new CustomPayload.Id<>(ExplorerMapRegistry.id("broadcast_discovery"));
+        public static final CustomPacketPayload.Type<Ack> TYPE =
+                new CustomPacketPayload.Type<>(ExplorerMapRegistry.id("ack_discovery"));
 
-        public static final PacketCodec<PacketByteBuf, Broadcast> CODEC =
-                PacketCodec.tuple(
-                        MapIdentity.PACKET_CODEC, Broadcast::mapId,
-                        PacketCodecs.byteArray(MapEntryData.BYTE_COUNT), Broadcast::bitmask,
-                        Broadcast::new
+        public static final StreamCodec<FriendlyByteBuf, Ack> CODEC =
+                StreamCodec.composite(
+                        MapIdentity.PACKET_CODEC, Ack::mapId,
+                        ByteBufCodecs.VAR_LONG, Ack::generation,
+                        Ack::new
                 );
 
-        @Override public CustomPayload.Id<? extends CustomPayload> getId() { return ID; }
+        @Override public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
 
         public static void registerCommon() {
-            PayloadTypeRegistry.playS2C().register(ID, CODEC);
+            PayloadTypeRegistry.clientboundPlay().register(TYPE, CODEC);
         }
 
         @Environment(EnvType.CLIENT)
         public static void registerClient() {
-            ClientPlayNetworking.registerGlobalReceiver(ID, (payload, ctx) ->
+            ClientPlayNetworking.registerGlobalReceiver(TYPE, (payload, ctx) ->
+                    ctx.client().execute(() ->
+                            SyncDiscoveryPayload.acknowledge(payload.mapId(), payload.generation())));
+        }
+    }
+
+    public record Broadcast(MapIdentity mapId, byte[] bitmask) implements CustomPacketPayload {
+
+        public static final CustomPacketPayload.Type<Broadcast> TYPE =
+                new CustomPacketPayload.Type<>(ExplorerMapRegistry.id("broadcast_discovery"));
+
+        public static final StreamCodec<FriendlyByteBuf, Broadcast> CODEC =
+                StreamCodec.composite(
+                        MapIdentity.PACKET_CODEC, Broadcast::mapId,
+                        ByteBufCodecs.byteArray(MapEntryData.BYTE_COUNT), Broadcast::bitmask,
+                        Broadcast::new
+                );
+
+        @Override public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
+
+        public static void registerCommon() {
+            PayloadTypeRegistry.clientboundPlay().register(TYPE, CODEC);
+        }
+
+        @Environment(EnvType.CLIENT)
+        public static void registerClient() {
+            ClientPlayNetworking.registerGlobalReceiver(TYPE, (payload, ctx) ->
                     ctx.client().execute(() -> handleOnClient(payload)));
         }
 
         @Environment(EnvType.CLIENT)
         private static void handleOnClient(Broadcast payload) {
             var mapEntry = ClientMapCache.getOrCreate(payload.mapId());
+            if (SyncDiscoveryPayload.hasUnacknowledged(payload.mapId(), mapEntry.getDiscoveryGeneration())) {
+                mapEntry.mergeBitmask(payload.bitmask());
+                return;
+            }
             mapEntry.replaceBitmask(payload.bitmask());
+            SyncDiscoveryPayload.acknowledge(payload.mapId(), mapEntry.getDiscoveryGeneration());
         }
     }
 
-    public static void sendTo(ServerPlayerEntity player, MapIdentity mapId) {
-        sendTo(player, mapId, ExplorerMapSavedData.get(player.getServer()));
+    public static void sendTo(ServerPlayer player, MapIdentity mapId) {
+        sendTo(player, mapId, ExplorerMapSavedData.get(player.level().getServer()));
     }
 
-    private static void sendTo(ServerPlayerEntity player, MapIdentity mapId, ExplorerMapSavedData savedData) {
+    private static void sendTo(ServerPlayer player, MapIdentity mapId, ExplorerMapSavedData savedData) {
         ServerPlayNetworking.send(player,
-                new Broadcast(mapId, savedData.getPlayerDiscovery(mapId, player.getUuid())));
+                new Broadcast(mapId, savedData.getPlayerDiscovery(mapId, player.getUUID())));
     }
 
-    public static final int UPLOAD_INTERVAL_TICKS = 60;
+    private static void penalize(ServerPlayer sender) {
+        if (LIMITER.recordInvalid(sender.getUUID())) {
+            ExplorerMapMod.LOGGER.warn(
+                    "[ExplorerMap] Suspending discovery uploads from {} for {} seconds after repeated invalid packets",
+                    sender.getName().getString(), DiscoveryUploadLimiter.COOLDOWN_MILLIS / 1000L);
+        }
+    }
 
-    private static int ticksSinceLastUpload = 0;
-    private static final Map<MapIdentity, Long> lastUploadedGeneration = new HashMap<>();
+    public static void forgetPlayer(UUID playerId) {
+        LIMITER.forget(playerId);
+    }
 
     @Environment(EnvType.CLIENT)
     public static void resetUploadState() {
         ticksSinceLastUpload = 0;
-        lastUploadedGeneration.clear();
+        UPLOAD_TRACKER.clear();
     }
 
     @Environment(EnvType.CLIENT)
@@ -136,13 +198,22 @@ public final class SyncDiscoveryPayload {
     }
 
     @Environment(EnvType.CLIENT)
-    public static boolean isDirty(MapIdentity mapId, long currentGeneration) {
-        Long previous = lastUploadedGeneration.get(mapId);
-        return previous == null || previous != currentGeneration;
+    public static boolean needsUpload(MapIdentity mapId, long currentGeneration) {
+        return UPLOAD_TRACKER.needsUpload(mapId, currentGeneration);
     }
 
     @Environment(EnvType.CLIENT)
     public static void markUploaded(MapIdentity mapId, long generation) {
-        lastUploadedGeneration.put(mapId, generation);
+        UPLOAD_TRACKER.markSent(mapId, generation);
+    }
+
+    @Environment(EnvType.CLIENT)
+    public static void acknowledge(MapIdentity mapId, long generation) {
+        UPLOAD_TRACKER.acknowledge(mapId, generation);
+    }
+
+    @Environment(EnvType.CLIENT)
+    public static boolean hasUnacknowledged(MapIdentity mapId, long currentGeneration) {
+        return UPLOAD_TRACKER.hasUnacknowledged(mapId, currentGeneration);
     }
 }

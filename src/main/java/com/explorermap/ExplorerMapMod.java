@@ -13,8 +13,8 @@ import com.explorermap.network.ShareDiscoveryPayload;
 import com.explorermap.interaction.ExplorerMapInteractions;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
-import net.minecraft.item.FilledMapItem;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.MapItem;
+import net.minecraft.world.item.ItemStack;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +26,10 @@ public class ExplorerMapMod implements ModInitializer {
     @Override
     public void onInitialize() {
 
-        PayloadTypeRegistry.playS2C().register(GrantExpansionPayload.ID,  GrantExpansionPayload.CODEC);
-        PayloadTypeRegistry.playS2C().register(SyncWaypointsPayload.ID,   SyncWaypointsPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(GrantExpansionPayload.TYPE,  GrantExpansionPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(SyncWaypointsPayload.TYPE,   SyncWaypointsPayload.CODEC);
         SyncDiscoveryPayload.Broadcast.registerCommon();
+        SyncDiscoveryPayload.Ack.registerCommon();
         ExpansionFailedPayload.registerCommon();
 
         RequestExpansionPayload.register();
@@ -46,6 +47,6 @@ public class ExplorerMapMod implements ModInitializer {
     }
 
     public static boolean isFilledMap(ItemStack stack) {
-        return stack.getItem() instanceof FilledMapItem;
+        return stack.getItem() instanceof MapItem;
     }
 }
