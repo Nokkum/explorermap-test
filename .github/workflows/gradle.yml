@@ -38,6 +38,9 @@ jobs:
 #        build-mode: manual
 #        queries: security-and-quality
 
+    - name: Grant execute permission for gradlew
+       run: chmod +x gradlew
+
     - name: Build and Compile with Gradle Wrapper
       run: ./gradlew build --no-daemon
 
