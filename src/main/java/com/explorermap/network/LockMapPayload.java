@@ -101,7 +101,7 @@ public record LockMapPayload(BlockPos tablePos) implements CustomPacketPayload {
         }
         original.shrink(1);
         if (!player.getInventory().add(locked)) {
-            player.drop(locked, false);
+            player.drop(locked, false, Prediction.SERVER_ONLY);
         }
     }
 }
