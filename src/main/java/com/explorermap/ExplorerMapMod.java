@@ -12,6 +12,7 @@ import com.explorermap.network.SyncExpansionsPayload;
 import com.explorermap.network.SyncWaypointsPayload;
 import com.explorermap.network.WaypointSharePayload;
 import com.explorermap.network.InsertWaypointCapacityPayload;
+import com.explorermap.network.LockMapPayload;
 import com.explorermap.network.ShareDiscoveryPayload;
 import com.explorermap.interaction.ExplorerMapInteractions;
 import net.fabricmc.api.ModInitializer;
@@ -28,7 +29,7 @@ public class ExplorerMapMod implements ModInitializer {
     public static final String MOD_ID = "explorermap";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    /** Squared distance within which a cartography table counts as in reach (server and client agree). */
+    // Squared distance within which a cartography table counts as in reach (server and client agree).
     public static final double TABLE_REACH_SQR = 64.0;
 
     @Override
@@ -48,6 +49,7 @@ public class ExplorerMapMod implements ModInitializer {
         DeleteWaypointPayload.register();
         WaypointSharePayload.register();
         InsertWaypointCapacityPayload.register();
+        LockMapPayload.register();
         ShareDiscoveryPayload.register();
         SyncDiscoveryPayload.Upload.register();
 
@@ -57,7 +59,7 @@ public class ExplorerMapMod implements ModInitializer {
         LOGGER.info("[ExplorerMap] Common init complete.");
     }
 
-    /** Operators (gamemaster permission) may edit and delete system waypoints. */
+    // Operators (gamemaster permission) may edit and delete system waypoints.
     public static boolean canManageSystemWaypoints(ServerPlayer player) {
         return player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
     }
