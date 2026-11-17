@@ -3,10 +3,8 @@ package com.explorermap.gui;
 import com.explorermap.ExplorerMapMod;
 import com.explorermap.expansion.ExpansionHandler;
 import com.explorermap.expansion.ExpansionRecord;
-import com.explorermap.lock.MapLocks;
 import com.explorermap.network.ClientNet;
 import com.explorermap.network.InsertWaypointCapacityPayload;
-import com.explorermap.network.LockMapPayload;
 import com.explorermap.network.RequestExpansionPayload;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -80,17 +78,9 @@ public final class CartographyTableScreen extends Screen {
                         })
                 .bounds(panelX + MARGIN, panelY + 92, 60, 20).build());
 
-        boolean locked = hasMap && MapLocks.isLocked(player.getItemInHand(InteractionHand.OFF_HAND), player.level());
-        Button lockButton = Button.builder(
-                        Component.translatable(locked ? "label.explorermap.locked" : "label.explorermap.lock"),
-                        button -> ClientNet.send(new LockMapPayload(tablePos)))
-                .bounds(panelX + MARGIN, panelY + 118, half, 20).build();
-        lockButton.active = hasMap && !locked && MapLocks.hasGlassPane(player);
-        addRenderableWidget(lockButton);
-
         addRenderableWidget(Button.builder(Component.translatable("label.explorermap.cancel"),
                         button -> onClose())
-                .bounds(panelX + MARGIN + half + GAP, panelY + 118, half, 20).build());
+                .bounds(panelX + MARGIN, panelY + 118, inner, 20).build());
 
         lastSignature = signature();
     }
@@ -104,8 +94,6 @@ public final class CartographyTableScreen extends Screen {
         for (ExpansionRecord.Direction direction : ExpansionRecord.Direction.values()) {
             if (ExpansionHandler.alreadyExpanded(player, direction)) signature |= 4 << direction.ordinal();
         }
-        if (MapLocks.isLocked(player.getItemInHand(InteractionHand.OFF_HAND), player.level())) signature |= 64;
-        if (MapLocks.hasGlassPane(player)) signature |= 128;
         return signature;
     }
 

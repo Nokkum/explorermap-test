@@ -5,8 +5,6 @@ import com.explorermap.data.MapIdentity;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.MapPostProcessing;
@@ -27,28 +25,6 @@ public final class MapLocks {
         if (!ExplorerMapMod.isFilledMap(stack)) return false;
         MapItemSavedData state = MapIdentity.stateOf(stack, level);
         return state != null && isLocked(state);
-    }
-
-    // Creative players do not need a glass pane. Matches {@link #consumeGlassPane}.
-    public static boolean hasGlassPane(Player player) {
-        if (player.isCreative()) return true;
-        Inventory inv = player.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            if (inv.getItem(i).is(Items.GLASS_PANE)) return true;
-        }
-        return false;
-    }
-
-    public static void consumeGlassPane(Player player) {
-        if (player.isCreative()) return;
-        Inventory inv = player.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack slot = inv.getItem(i);
-            if (slot.is(Items.GLASS_PANE)) {
-                slot.shrink(1);
-                return;
-            }
-        }
     }
 
     // A locked copy of the given map item, under a newly allocated map id; the source stack is untouched.
