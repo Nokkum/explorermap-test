@@ -165,6 +165,6 @@ public final class BannerMapActions {
     }
 
     private static void tell(ServerPlayer player, String translationKey) {
-        player.displayClientMessage(Component.translatable(translationKey), true);
+        player.sendOverlayMessage(Component.translatable(translationKey));
     }
 }
