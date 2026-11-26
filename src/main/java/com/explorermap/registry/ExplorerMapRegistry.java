@@ -18,6 +18,13 @@ public class ExplorerMapRegistry {
         register("explorermap:temple",   id("textures/waypoints/temple.png"));
         register("explorermap:dungeon",  id("textures/waypoints/dungeon.png"));
         register("explorermap:base",     id("textures/waypoints/base.png"));
+        register("explorermap:monument", id("textures/waypoints/monument.png"));
+        register("explorermap:outpost",  id("textures/waypoints/outpost.png"));
+        register("explorermap:portal",   id("textures/waypoints/portal.png"));
+        register("explorermap:ship",     id("textures/waypoints/ship.png"));
+        register("explorermap:fortress", id("textures/waypoints/fortress.png"));
+        register("explorermap:treasure", id("textures/waypoints/treasure.png"));
+        register("explorermap:vault",    id("textures/waypoints/vault.png"));
     }
 
     public static void register(String iconId, Identifier texture) {

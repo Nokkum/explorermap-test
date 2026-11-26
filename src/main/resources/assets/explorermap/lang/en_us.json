@@ -123,5 +123,7 @@
   "explorermap.structure.ocean_ruin_cold": "Ocean Ruin",
   "explorermap.structure.ocean_ruin_warm": "Ocean Ruin",
   "explorermap.structure.nether_fossil": "Nether Fossil",
+  "explorermap.structure.ocean_ruin": "Ocean Ruin",
+  "explorermap.structure.map_target": "Map Marker",
   "explorermap.structure.unknown": "Structure"
 }

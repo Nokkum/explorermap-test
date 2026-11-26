@@ -246,7 +246,7 @@ public final class StructureWaypointDetector {
     }
 
     /** Only an automatic waypoint of the same type close by counts: a player's own waypoint, or another type, doesn't. */
-    private static boolean hasDuplicateWaypoint(MapEntryData entry, String type, double wx, double wz) {
+    static boolean hasDuplicateWaypoint(MapEntryData entry, String type, double wx, double wz) {
         for (Waypoint existing : entry.getWaypoints()) {
             if (!existing.isSystemOrLegacy()) continue;
             if (!StructureIds.typeOfStoredName(existing.name()).equals(type)) continue;
@@ -257,7 +257,7 @@ public final class StructureWaypointDetector {
         return false;
     }
 
-    private static String uniqueName(MapEntryData entry, String baseName) {
+    static String uniqueName(MapEntryData entry, String baseName) {
         Set<String> existingNames = new HashSet<>();
         for (Waypoint wp : entry.getWaypoints()) existingNames.add(wp.name());
         if (!existingNames.contains(baseName)) return baseName;

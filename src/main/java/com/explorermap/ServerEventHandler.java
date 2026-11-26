@@ -9,6 +9,7 @@ import com.explorermap.network.RequestExpansionPayload;
 import com.explorermap.network.TileColorSync;
 import com.explorermap.network.SyncWaypointsPayload;
 import com.explorermap.network.SyncDiscoveryPayload;
+import com.explorermap.structure.MapTargetWaypoints;
 import com.explorermap.structure.StructureWaypointDetector;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -50,6 +51,7 @@ public final class ServerEventHandler {
         });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             BannerMapActions.tick(server);
+            MapTargetWaypoints.tick(server);
             if (++offHandCheckCounter >= OFFHAND_CHECK_INTERVAL_TICKS) {
                 offHandCheckCounter = 0;
                 checkOffHandChanges(server);

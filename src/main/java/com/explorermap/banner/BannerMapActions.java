@@ -4,6 +4,7 @@ import com.explorermap.ExplorerMapMod;
 import com.explorermap.data.ExplorerMapSavedData;
 import com.explorermap.data.MapEntryData;
 import com.explorermap.data.MapIdentity;
+import com.explorermap.expansion.MapTiles;
 import com.explorermap.lock.MapLocks;
 import com.explorermap.network.ExpansionFamilySync;
 import com.explorermap.network.SyncWaypointsPayload;
@@ -53,7 +54,8 @@ public final class BannerMapActions {
         ExplorerMapSavedData savedData = ExplorerMapSavedData.get(server);
 
         // The label lives on the tile of the map that covers the banner, which may be an expansion of the held map.
-        MapIdentity tile = tileCovering(server, savedData, root, level, bannerPos);
+        MapIdentity tile = MapTiles.covering(server, savedData, root, level.dimension(),
+                bannerPos.getX() + 0.5, bannerPos.getZ() + 0.5);
         if (tile == null) {
             tell(player, "explorermap.banner.outside");
             return;
@@ -134,22 +136,6 @@ public final class BannerMapActions {
             }
             if (changed) SyncWaypointsPayload.broadcastTo(server, tile);
         }
-    }
-
-    private static MapIdentity tileCovering(MinecraftServer server, ExplorerMapSavedData savedData,
-                                            MapIdentity root, Level level, BlockPos pos) {
-        double x = pos.getX() + 0.5;
-        double z = pos.getZ() + 0.5;
-        for (MapIdentity candidate : ExpansionFamilySync.familyOf(savedData, root).maps()) {
-            MapItemSavedData tileState = MapIdentity.resolveAndVerify(server, candidate);
-            if (tileState == null || !tileState.dimension.equals(level.dimension())) continue;
-            // A tile spans 128 pixels, so its edge is 64 * scale blocks from the center (as for waypoints).
-            int maxDist = 64 * (1 << tileState.scale);
-            if (Math.abs(x - tileState.centerX) <= maxDist && Math.abs(z - tileState.centerZ) <= maxDist) {
-                return candidate;
-            }
-        }
-        return null;
     }
 
     private static int labelCount(ExplorerMapSavedData savedData, MapIdentity root) {
