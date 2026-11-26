@@ -38,10 +38,12 @@ test {
 }
 
 processResources {
-    inputs.property "version", project.version
+    def modVersion = project.version
+    inputs.property "version", modVersion
     filteringCharset = "UTF-8"
+
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": modVersion
     }
 }
 
