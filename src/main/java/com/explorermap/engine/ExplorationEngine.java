@@ -18,6 +18,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.BlockHitResult;
@@ -32,6 +33,8 @@ import java.util.concurrent.ThreadLocalRandom;
 public class ExplorationEngine {
 
     private static final double MAX_RANGE = 256.0;
+    // How far vanilla narrows the field of view while looking through a spyglass (the FOV is multiplied by this).
+    private static final double SPYGLASS_FOV_FACTOR = 0.1;
 
     private static int tickCounter = 0;
 
@@ -65,8 +68,11 @@ public class ExplorationEngine {
         float pitchDeg = player.getXRot();
 
         // The FOV option is the vertical field of view; the horizontal one follows from the window's aspect ratio.
-        // (Temporary FOV changes from sprinting or zooming are not taken into account.)
+        // (FOV changes from sprinting and the like are not taken into account.)
         double vFovDeg = client.options.fov().get();
+        // Through a spyglass the player sees only the narrow scope cone, so the rays go there and nowhere else.
+        // The same few rays then cover that cone far more densely, which fills in distant terrain much faster.
+        if (isScoping(client, player)) vFovDeg *= SPYGLASS_FOV_FACTOR;
         double aspect  = (double) client.getWindow().getScreenWidth()
                 / Math.max(1, client.getWindow().getScreenHeight());
         double hFovDeg = Math.min(170.0,
@@ -81,6 +87,13 @@ public class ExplorationEngine {
         if (SyncDiscoveryPayload.uploadWindowOpen()) {
             uploadDirtyTiles(grid);
         }
+    }
+
+    // A spyglass only zooms the view in first person (in third person the player still sees the wide view).
+    private static boolean isScoping(Minecraft client, LocalPlayer player) {
+        return client.options.getCameraType().isFirstPerson()
+                && player.isUsingItem()
+                && player.getUseItem().is(Items.SPYGLASS);
     }
 
     private static void uploadDirtyTiles(TileGrid grid) {
