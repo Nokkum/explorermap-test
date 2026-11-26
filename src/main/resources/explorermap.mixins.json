@@ -4,6 +4,7 @@
   "package": "com.explorermap.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "AbstractContainerMenuMixin",
     "MapItemMixin"
   ],
   "injectors": {

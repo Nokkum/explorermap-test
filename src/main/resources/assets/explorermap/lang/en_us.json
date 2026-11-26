@@ -95,6 +95,7 @@
   "explorermap.expansion.fail.on_cooldown": "Wait a moment before expanding again",
   "explorermap.expansion.fail.family_full": "This map cannot be expanded any further",
   "explorermap.expansion.fail.map_locked": "Locked maps cannot be expanded",
+  "explorermap.table.cost": "This map needs %1$s %2$s in the lower slot",
   "explorermap.banner.unnamed": "Name this banner in an anvil to show it on the map",
   "explorermap.banner.outside": "This banner is outside the map",
   "explorermap.banner.locked": "Locked maps cannot be changed",
