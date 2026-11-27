@@ -1,6 +1,7 @@
 package com.explorermap.structure;
 
 import com.explorermap.ExplorerMapMod;
+import com.explorermap.api.StructureVisibility;
 import com.explorermap.data.ExplorerMapSavedData;
 import com.explorermap.data.MapEntryData;
 import com.explorermap.data.MapIdentity;
@@ -171,21 +172,25 @@ public final class StructureWaypointDetector {
         for (Map.Entry<Structure, StructureStart> se : starts.entrySet()) {
             StructureStart start = se.getValue();
             if (!start.isValid()) continue;
+
+            StructureRef structure = structureRef(world, se.getKey());
+            StructureOverrides tags = StructureTags.of(world, se.getKey());
+            StructureVisibility visibility = StructureIds.visibility(structure.namespace(), structure.path(), tags);
+            if (visibility == StructureVisibility.HIDDEN) continue;
+
             if (!structureOverlapsDiscovered(start, bitmask, minX, minZ, scale)) continue;
 
             BoundingBox bb = start.getBoundingBox();
             double structX = (bb.minX() + bb.maxX()) / 2.0;
             double structZ = (bb.minZ() + bb.maxZ()) / 2.0;
 
-            String path = structurePath(world, se.getKey());
-            if (!visibleFromAbove(world, bb, structX, structZ)) continue;
+            if (visibility == StructureVisibility.SURFACE && !visibleFromAbove(world, bb, structX, structZ)) continue;
 
-            String nameKey = StructureIds.nameKey(path);
-            if (hasDuplicateWaypoint(entry, StructureIds.normalize(path), structX, structZ)) continue;
+            StructureIds.Look look = StructureIds.look(structure.namespace(), structure.path(), tags.type());
+            if (hasDuplicateWaypoint(entry, look.type(), structX, structZ)) continue;
 
-            String name = uniqueName(entry, nameKey);
-            Waypoint wp = Waypoint.create(name, structX, structZ,
-                    StructureIds.icon(path), StructureIds.color(path), "");
+            String name = uniqueName(entry, look.nameKey());
+            Waypoint wp = Waypoint.create(name, structX, structZ, look.icon(), look.color(), "");
             savedData.addWaypoint(mapId, wp);
             placedAny = true;
 
@@ -270,9 +275,9 @@ public final class StructureWaypointDetector {
         return candidate;
     }
 
-    private static String structurePath(ServerLevel world, Structure structure) {
+    private static StructureRef structureRef(ServerLevel world, Structure structure) {
         var registry = world.registryAccess().lookupOrThrow(Registries.STRUCTURE);
         Identifier key = registry.getKey(structure);
-        return key == null ? "unknown" : key.getPath();
+        return key == null ? new StructureRef("minecraft", "unknown") : new StructureRef(key.getNamespace(), key.getPath());
     }
 }

@@ -67,8 +67,12 @@ public final class MapTargetWaypoints {
     private static void place(MinecraftServer server, ExplorerMapSavedData savedData, MapIdentity root,
                               MapItemSavedData state, MapDecorations.Entry target) {
         String registeredName = target.type().getRegisteredName();
-        String path = registeredName.substring(registeredName.indexOf(':') + 1);
-        String type = StructureIds.fromMapDecoration(path);
+        int colon = registeredName.indexOf(':');
+        String decorationNamespace = colon < 0 ? "minecraft" : registeredName.substring(0, colon);
+        String decorationPath = registeredName.substring(colon + 1);
+        // Vanilla's decorations mark vanilla structures, and another mod can say which structure its own marks.
+        StructureRef structure = StructureIds.structureForMapDecoration(decorationNamespace, decorationPath);
+        String type = StructureIds.normalize(structure.namespace(), structure.path());
 
         // The waypoint lives on the tile of the map that covers the target (the root, for an explorer map).
         MapIdentity tile = MapTiles.covering(server, savedData, root, state.dimension, target.x(), target.z());
@@ -76,13 +80,15 @@ public final class MapTargetWaypoints {
 
         MapEntryData entry = savedData.getOrCreate(tile);
         // Already there, for instance because the structure was seen and found automatically first.
-        if (StructureWaypointDetector.hasDuplicateWaypoint(entry, StructureIds.normalize(type), target.x(), target.z())) {
+        if (StructureWaypointDetector.hasDuplicateWaypoint(entry, type, target.x(), target.z())) {
             return;
         }
 
-        String name = StructureWaypointDetector.uniqueName(entry, StructureIds.nameKey(type));
+        String name = StructureWaypointDetector.uniqueName(entry,
+                StructureIds.nameKey(structure.namespace(), structure.path()));
         savedData.addWaypoint(tile, Waypoint.create(name, target.x(), target.z(),
-                StructureIds.icon(type), StructureIds.color(type), ""));
+                StructureIds.icon(structure.namespace(), structure.path()),
+                StructureIds.color(structure.namespace(), structure.path()), ""));
         SyncWaypointsPayload.broadcastTo(server, tile);
 
         ExplorerMapMod.LOGGER.info("[ExplorerMap] Map target: {} at ({}, {}) on map {}",
